@@ -93,6 +93,22 @@
 
         const CATEGORIES = ['Semua', 'New Upload', 'Sticker', 'Sticker Book', 'Tweezers'];
 
+        // Variasi produk disimpan sebagai [{ name, price }]. Produk lama yang
+        // cuma punya `options` + satu harga tetap jalan lewat helper ini.
+        const getVariants = (product) => {
+            if (product.variants && product.variants.length) return product.variants;
+            const names = (product.options && product.options.length) ? product.options : ['Default'];
+            return names.map(name => ({ name, price: product.price }));
+        };
+
+        const getVariantPrice = (product, variantName) => {
+            const variants = getVariants(product);
+            const found = variants.find(v => v.name === variantName);
+            return found ? found.price : (variants[0] ? variants[0].price : product.price);
+        };
+
+        const cheapestVariantPrice = (variants) => Math.min(...variants.map(v => v.price));
+
         function App() {
             const [currentPage, setCurrentPage] = useState('home');
 
@@ -134,8 +150,10 @@
             });
 
             const [newProduct, setNewProduct] = useState({
-                name: '', price: '', category: 'New Upload', description: '', image: '', isBestSeller: false, optionsStr: '🐰 Bunny, 🐻 Bear, 🐱 Cat'
+                name: '', price: '', category: 'New Upload', description: '', image: '', isBestSeller: false,
+                variants: [{ name: '', price: '' }]
             });
+            const [bulkText, setBulkText] = useState('');
 
             useEffect(() => {
                 localStorage.setItem('puffstick_products_v48', JSON.stringify(products));
@@ -261,15 +279,16 @@
             const addToCart = (product) => {
                 if (product.isSoldOut) return;
                 playPlopSound();
-                const chosenOption = selectedOptions[product.id] || (product.options && product.options[0]) || 'Default';
+                const chosenOption = selectedOptions[product.id] || getVariants(product)[0].name;
                 const cartItemId = `${product.id}_${chosenOption}`;
+                const variantPrice = getVariantPrice(product, chosenOption);
 
                 setCart(prev => {
                     const existing = prev.find(item => item.cartItemId === cartItemId);
                     if (existing) {
                         return prev.map(item => item.cartItemId === cartItemId ? { ...item, quantity: item.quantity + 1 } : item);
                     }
-                    return [...prev, { ...product, cartItemId, selectedOption: chosenOption, quantity: 1 }];
+                    return [...prev, { ...product, cartItemId, selectedOption: chosenOption, price: variantPrice, quantity: 1 }];
                 });
                 notify(`✨ Berhasil memasukkan ${product.name} (${chosenOption}) ke keranjang!`);
             };
@@ -350,24 +369,85 @@
                 notify('📋 Format pesanan berhasil disalin ke clipboard!');
             };
 
+            const emptyNewProduct = {
+                name: '', price: '', category: 'New Upload', description: '', image: '', isBestSeller: false,
+                variants: [{ name: '', price: '' }]
+            };
+
+            const buildVariants = (rows, basePrice) => {
+                const filled = rows
+                    .filter(v => v.name.trim())
+                    .map(v => ({ name: v.name.trim(), price: v.price === '' ? basePrice : Number(v.price) }));
+                return filled.length ? filled : [{ name: 'Default', price: basePrice }];
+            };
+
             const handleAddProduct = (e) => {
                 e.preventDefault();
-                if(!newProduct.name || !newProduct.price) return;
-                const optionsArray = newProduct.optionsStr ? newProduct.optionsStr.split(',').map(s => s.trim()).filter(Boolean) : ['🐰 Default'];
+                if (!newProduct.name || !newProduct.price) return;
+                const basePrice = Number(newProduct.price);
+                const variants = buildVariants(newProduct.variants, basePrice);
                 const created = {
                     id: 'p_' + Date.now(),
                     name: newProduct.name,
-                    price: Number(newProduct.price),
+                    price: cheapestVariantPrice(variants),
                     category: newProduct.category,
                     description: newProduct.description || 'Stiker cute edisi terbatas dari Puffstick Studio.',
                     image: newProduct.image,
                     isSoldOut: false,
                     isBestSeller: newProduct.isBestSeller,
-                    options: optionsArray
+                    options: variants.map(v => v.name),
+                    variants
                 };
                 setProducts([created, ...products]);
-                setNewProduct({ name: '', price: '', category: 'New Upload', description: '', image: '', isBestSeller: false, optionsStr: '🐰 Bunny, 🐻 Bear, 🐱 Cat' });
+                setNewProduct({ ...emptyNewProduct });
                 notify('✨ Produk baru berhasil ditambahkan!');
+            };
+
+            // Tambah banyak produk sekaligus: satu produk per baris,
+            // format: Nama | Harga | Kategori | Variasi1:harga, Variasi2:harga
+            const handleBulkAdd = () => {
+                const lines = bulkText.split('\n').map(l => l.trim()).filter(Boolean);
+                if (!lines.length) return;
+                const created = [];
+                lines.forEach((line, idx) => {
+                    const [name, price, category, variantsRaw] = line.split('|').map(s => (s || '').trim());
+                    const basePrice = Number(price);
+                    if (!name || !price || isNaN(basePrice)) return;
+                    const rows = variantsRaw
+                        ? variantsRaw.split(',').map(s => s.trim()).filter(Boolean).map(part => {
+                            const [vName, vPrice] = part.split(':').map(s => (s || '').trim());
+                            return { name: vName, price: vPrice ? Number(vPrice) : basePrice };
+                        })
+                        : [];
+                    const variants = buildVariants(rows.length ? rows : [{ name: 'Default', price: '' }], basePrice);
+                    created.push({
+                        id: 'p_' + (Date.now() + idx),
+                        name,
+                        price: cheapestVariantPrice(variants),
+                        category: CATEGORIES.includes(category) ? category : 'New Upload',
+                        description: 'Stiker cute edisi terbatas dari Puffstick Studio.',
+                        image: '',
+                        isSoldOut: false,
+                        isBestSeller: false,
+                        options: variants.map(v => v.name),
+                        variants
+                    });
+                });
+                if (!created.length) {
+                    notify('❌ Format belum benar, cek lagi ya beb!');
+                    return;
+                }
+                setProducts([...created, ...products]);
+                setBulkText('');
+                notify(`✨ ${created.length} produk berhasil ditambahkan sekaligus!`);
+            };
+
+            const updateVariantPrice = (productId, variantName, value) => {
+                setProducts(prev => prev.map(p => {
+                    if (p.id !== productId) return p;
+                    const variants = getVariants(p).map(v => v.name === variantName ? { ...v, price: Number(value) || 0 } : v);
+                    return { ...p, variants, price: cheapestVariantPrice(variants) };
+                }));
             };
 
             return (
@@ -650,25 +730,65 @@
                                                 <label htmlFor="bestSellerCheck" className="text-xs font-bold text-gray-700 cursor-pointer">Jadikan Badge 🔥 Best Seller</label>
                                             </div>
 
-                                            <input type="text" placeholder="Pilihan Variasi (pisahkan koma, cth: 🐰 Bunny, 🐻 Bear)" value={newProduct.optionsStr} onChange={e => setNewProduct({...newProduct, optionsStr: e.target.value})} className="w-full border border-pink-100 bg-white rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400 outline-none" />
+                                            <div className="space-y-1.5">
+                                                <label className="text-[10px] font-bold text-gray-500">Variasi & Harga (boleh beda tiap variasi):</label>
+                                                {newProduct.variants.map((v, i) => (
+                                                    <div key={i} className="flex items-center gap-1.5">
+                                                        <input type="text" placeholder="Nama variasi" value={v.name} onChange={e => setNewProduct(prev => ({ ...prev, variants: prev.variants.map((row, ri) => ri === i ? { ...row, name: e.target.value } : row) }))} className="flex-1 border border-pink-100 bg-white rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400 outline-none" />
+                                                        <input type="number" placeholder="Harga" value={v.price} onChange={e => setNewProduct(prev => ({ ...prev, variants: prev.variants.map((row, ri) => ri === i ? { ...row, price: e.target.value } : row) }))} className="w-24 border border-pink-100 bg-white rounded-xl px-2 py-2 text-xs focus:ring-2 focus:ring-pink-400 outline-none" />
+                                                        <button type="button" onClick={() => setNewProduct(prev => ({ ...prev, variants: prev.variants.filter((_, ri) => ri !== i) }))} className="w-7 h-7 shrink-0 rounded-lg bg-white border border-pink-100 text-gray-400 hover:text-red-500 font-bold">✕</button>
+                                                    </div>
+                                                ))}
+                                                <button type="button" onClick={() => setNewProduct(prev => ({ ...prev, variants: [...prev.variants, { name: '', price: '' }] }))} className="w-full bg-white border border-dashed border-pink-300 text-pink-600 font-bold py-1.5 rounded-xl text-[11px] hover:bg-pink-50">＋ Tambah Variasi</button>
+                                                <p className="text-[10px] text-gray-400 italic">Harga variasi boleh kosong — otomatis pakai harga di atas.</p>
+                                            </div>
                                             <input type="text" placeholder="Deskripsi singkat..." value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full border border-pink-100 bg-white rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-pink-400 outline-none" />
                                             
                                             <button type="submit" className="w-full bg-pink-500 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-pink-600 shadow-md">Simpan Produk</button>
                                         </form>
 
+                                        <div className="space-y-2 bg-purple-50/40 p-3.5 rounded-2xl border border-purple-100">
+                                            <h4 className="text-xs font-bold text-purple-700">📥 Tambah Banyak Produk Sekaligus:</h4>
+                                            <p className="text-[10px] text-gray-500 leading-relaxed">
+                                                Satu produk per baris: <b>Nama | Harga | Kategori | Variasi:harga, Variasi:harga</b><br />
+                                                Kategori: New Upload / Sticker / Sticker Book / Tweezers. Variasi boleh dikosongkan.
+                                            </p>
+                                            <textarea
+                                                rows={4}
+                                                value={bulkText}
+                                                onChange={e => setBulkText(e.target.value)}
+                                                placeholder={"Bunny Bakery Book Set | 45000 | Sticker | 🐰 Bunny:45000, 🐻 Bear:48000\nPrecision Pink Tweezer | 25000 | Tweezers"}
+                                                className="w-full border border-purple-100 bg-white rounded-xl px-3 py-2 text-xs font-mono focus:ring-2 focus:ring-purple-300 outline-none"
+                                            />
+                                            <button type="button" onClick={handleBulkAdd} className="w-full bg-purple-500 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-purple-600 shadow-md">📥 Tambah Semua Produk</button>
+                                        </div>
+
                                         <div className="bg-pink-50/40 p-3 rounded-2xl border border-pink-100 space-y-2">
                                             <label className="text-[11px] font-bold text-pink-700 block">📦 Kelola Stok & Produk:</label>
                                             <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
                                                 {products.map(p => (
-                                                    <div key={p.id} className="flex items-center justify-between bg-white p-2 rounded-xl border border-pink-100 text-xs">
-                                                        <span className="font-semibold text-gray-700 truncate max-w-[140px]">{p.name}</span>
-                                                        <div className="flex items-center gap-1.5">
-                                                            <button onClick={() => toggleSoldOut(p.id)} className={`px-2 py-1 rounded-lg text-[10px] font-bold ${p.isSoldOut ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`}>
-                                                                {p.isSoldOut ? 'Sold Out ❌' : 'Ready ✅'}
-                                                            </button>
-                                                            <button onClick={() => deleteProduct(p.id)} className="bg-gray-200 text-gray-600 px-2 py-1 rounded-lg text-[10px] font-bold hover:bg-red-100 hover:text-red-600">
-                                                                Hapus
-                                                            </button>
+                                                    <div key={p.id} className="bg-white p-2 rounded-xl border border-pink-100 text-xs space-y-1.5">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="font-semibold text-gray-700 truncate max-w-[140px]">{p.name}</span>
+                                                            <div className="flex items-center gap-1.5">
+                                                                <button onClick={() => toggleSoldOut(p.id)} className={`px-2 py-1 rounded-lg text-[10px] font-bold ${p.isSoldOut ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`}>
+                                                                    {p.isSoldOut ? 'Sold Out ❌' : 'Ready ✅'}
+                                                                </button>
+                                                                <button onClick={() => deleteProduct(p.id)} className="bg-gray-200 text-gray-600 px-2 py-1 rounded-lg text-[10px] font-bold hover:bg-red-100 hover:text-red-600">
+                                                                    Hapus
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        <div className="space-y-1 border-t border-pink-50 pt-1.5">
+                                                            {getVariants(p).map(v => (
+                                                                <div key={v.name} className="flex items-center justify-between gap-2">
+                                                                    <span className="text-[10px] text-gray-500 truncate">{v.name}</span>
+                                                                    <div className="flex items-center gap-1 shrink-0">
+                                                                        <span className="text-[10px] text-gray-400">Rp</span>
+                                                                        <input type="number" value={v.price} onChange={e => updateVariantPrice(p.id, v.name, e.target.value)} className="w-20 border border-pink-100 rounded-lg px-1.5 py-0.5 text-[10px] text-right focus:ring-2 focus:ring-pink-400 outline-none" />
+                                                                    </div>
+                                                                </div>
+                                                            ))}
                                                         </div>
                                                     </div>
                                                 ))}
@@ -701,7 +821,8 @@
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     {filteredProducts.map(p => {
-                                        const currentSelectedOpt = selectedOptions[p.id] || (p.options && p.options[0]);
+                                        const variants = getVariants(p);
+                                        const currentSelectedOpt = selectedOptions[p.id] || variants[0].name;
                                         return (
                                             <div key={p.id} className={`bg-white border rounded-3xl p-4 flex flex-col justify-between shadow-sm transition ${p.isSoldOut ? 'border-gray-200 opacity-80' : 'border-pink-100 hover:shadow-md'}`}>
                                                 <div>
@@ -728,18 +849,18 @@
                                                     <h3 className="font-bold text-xs text-gray-800 mt-0.5">{p.name}</h3>
                                                     <p className="text-[10px] text-gray-400 line-clamp-1 mt-0.5">{p.description}</p>
                                                     
-                                                    {p.options && p.options.length > 0 && !p.isSoldOut && (
+                                                    {variants.length > 0 && !p.isSoldOut && (
                                                         <div className="mt-2.5">
                                                             <p className="text-[10px] font-bold text-pink-600 mb-1">Pilih Variasi:</p>
                                                             <div className="flex flex-wrap gap-1.5">
-                                                                {p.options.map(opt => (
+                                                                {variants.map(v => (
                                                                     <button
-                                                                        key={opt}
+                                                                        key={v.name}
                                                                         type="button"
-                                                                        onClick={() => handleOptionSelect(p.id, opt)}
-                                                                        className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition border ${currentSelectedOpt === opt ? 'bg-pink-500 text-white border-pink-500 shadow-sm' : 'bg-pink-50/40 text-gray-600 border-pink-100 hover:bg-pink-100'}`}
+                                                                        onClick={() => handleOptionSelect(p.id, v.name)}
+                                                                        className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition border ${currentSelectedOpt === v.name ? 'bg-pink-500 text-white border-pink-500 shadow-sm' : 'bg-pink-50/40 text-gray-600 border-pink-100 hover:bg-pink-100'}`}
                                                                     >
-                                                                        {opt}
+                                                                        {v.name} · {formatRp(v.price)}
                                                                     </button>
                                                                 ))}
                                                             </div>
@@ -748,7 +869,7 @@
                                                 </div>
 
                                                 <div className="flex items-center justify-between mt-4 pt-3 border-t border-pink-50">
-                                                    <span className="font-bold text-xs text-pink-600">{formatRp(p.price)}</span>
+                                                    <span className="font-bold text-xs text-pink-600">{formatRp(getVariantPrice(p, currentSelectedOpt))}</span>
                                                     {p.isSoldOut ? (
                                                         <span className="bg-gray-100 text-gray-400 px-3 py-1.5 rounded-full font-bold text-xs">Habis ❌</span>
                                                     ) : (
