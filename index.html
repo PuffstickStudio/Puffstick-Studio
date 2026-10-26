@@ -21,7 +21,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        const DEFAULT_LOGO = "🐰 Bunny";
+        const DEFAULT_LOGO = "/assets/logo-puffstick.jpeg";
 
         const INITIAL_PRODUCTS = [
             { 
@@ -97,7 +97,7 @@
             const [currentPage, setCurrentPage] = useState('home');
 
             const [profileLogo, setProfileLogo] = useState(() => {
-                return localStorage.getItem('puffstick_permanent_logo') || DEFAULT_LOGO;
+                return localStorage.getItem('puffstick_permanent_logo_v2') || DEFAULT_LOGO;
             });
 
             const [products, setProducts] = useState(() => {
@@ -142,7 +142,7 @@
             }, [products]);
 
             useEffect(() => {
-                localStorage.setItem('puffstick_permanent_logo', profileLogo);
+                localStorage.setItem('puffstick_permanent_logo_v2', profileLogo);
             }, [profileLogo]);
 
             useEffect(() => {
