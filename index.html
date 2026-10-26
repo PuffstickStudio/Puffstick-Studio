@@ -142,6 +142,8 @@
             const [showNotification, setShowNotification] = useState('');
             
             const logoInputRef = useRef(null);
+            const productImageRef = useRef(null);
+            const [imageTargetId, setImageTargetId] = useState(null);
             const [selectedOptions, setSelectedOptions] = useState({});
 
             const [customerInfo, setCustomerInfo] = useState(() => {
@@ -243,6 +245,21 @@
                     };
                     reader.readAsDataURL(file);
                 }
+            };
+
+            // Upload / ganti foto produk yang sudah ada — termasuk produk yang
+            // ditambahkan lewat "Tambah Banyak Produk Sekaligus".
+            const handleExistingProductImageUpload = (e) => {
+                const file = e.target.files[0];
+                e.target.value = '';
+                if (!file || !imageTargetId) return;
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    setProducts(prev => prev.map(p => p.id === imageTargetId ? { ...p, image: reader.result } : p));
+                    notify('📸 Foto produk berhasil diperbarui!');
+                    setImageTargetId(null);
+                };
+                reader.readAsDataURL(file);
             };
 
             const toggleSoldOut = (id) => {
@@ -464,6 +481,14 @@
                         onChange={handleGlobalLogoUpload} 
                         accept="image/*" 
                         className="hidden" 
+                    />
+
+                    <input
+                        type="file"
+                        ref={productImageRef}
+                        onChange={handleExistingProductImageUpload}
+                        accept="image/*"
+                        className="hidden"
                     />
 
                     {/* MODAL VERIFIKASI PIN OWNER */}
@@ -751,7 +776,8 @@
                                             <h4 className="text-xs font-bold text-purple-700">📥 Tambah Banyak Produk Sekaligus:</h4>
                                             <p className="text-[10px] text-gray-500 leading-relaxed">
                                                 Satu produk per baris: <b>Nama | Harga | Kategori | Variasi:harga, Variasi:harga</b><br />
-                                                Kategori: New Upload / Sticker / Sticker Book / Tweezers. Variasi boleh dikosongkan.
+                                                Kategori: New Upload / Sticker / Sticker Book / Tweezers. Variasi boleh dikosongkan.<br />
+                                                Foto tiap produk diunggah setelah masuk lewat tombol <b>📷 Foto</b> di daftar produk bawah ini.
                                             </p>
                                             <textarea
                                                 rows={4}
@@ -771,6 +797,9 @@
                                                         <div className="flex items-center justify-between">
                                                             <span className="font-semibold text-gray-700 truncate max-w-[140px]">{p.name}</span>
                                                             <div className="flex items-center gap-1.5">
+                                                                <button onClick={() => { setImageTargetId(p.id); productImageRef.current.click(); }} className={`px-2 py-1 rounded-lg text-[10px] font-bold ${p.image ? 'bg-pink-100 text-pink-700' : 'bg-pink-50 text-pink-500'} hover:bg-pink-200`} title="Upload / ganti foto produk">
+                                                                    {p.image ? '📷 ✅' : '📷 Foto'}
+                                                                </button>
                                                                 <button onClick={() => toggleSoldOut(p.id)} className={`px-2 py-1 rounded-lg text-[10px] font-bold ${p.isSoldOut ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`}>
                                                                     {p.isSoldOut ? 'Sold Out ❌' : 'Ready ✅'}
                                                                 </button>
